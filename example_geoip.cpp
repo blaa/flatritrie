@@ -18,7 +18,7 @@
 #include "utils.hpp"
 
 const int POLAND = 798544;
-const int BITS = 4;
+const int BITS = 6;
 
 template<typename Fn>
 void read_csv(const std::string path, Fn reader) {

@@ -1,0 +1,140 @@
+* Flatritrie
+  C++ template implementing an optimized Trie structure for matching IP
+  addresses to metadata (like GeoIP, index, etc.) with following properties:
+
+  - Immutable after construction.
+  - Optimized for query speed, not for memory usage.
+  - Returns the most specific match (largest mask).
+  - Must fit into the memory and should load whole GeoIP database under 1 second.
+  - Should work with both IPv4 and IPv6.
+
+  It's implemented as a flattened Trie, which matches IP addresses by 1 to 8
+  bits at a time. The "tri" in the name works best for 3 BITS obviously.
+
+** Example
+   Tritrie<3> or Flatritrie<3> will match address 3 bits at a time, for at most
+   11 memory accesses. With following entries:
+   - 123.250.0.0/16 -> 300
+   - 123.250.85.17/32 -> 400
+
+   Querying for 123.250.85.17, will:
+   - Traverse first 5 levels without finding anything:
+     011 -> 110 -> 111 -> 111 -> 101
+   - At 6th level (001) find a match "300".
+   - If nothing more would match, the 300 would be returned as a best match.
+   - Match rest of the levels: 010 -> 101 -> 000 -> 100 -> 01 and at the last
+     one, match 400.
+   - Return 400 as the best match.
+
+  Querying Tritrie and Flatritrie works conceptually in the same way. Flatritrie
+  tries to pack the data better in the memory to achieve better cache locality.
+  It's construction is similar to a "Finite State Automaton" with states defined
+  in a table.
+
+** Context
+   Matching an IP address to some additional metadata is a known and a common
+   problem. Hardware routers might do it with a TCAM, Linux kernel does it with
+   LC-tries (Level-Compressed tries). IP like a.b.c.d can be matched by
+   a.0.0.0/8 or a.b.c.0/24 entry and we will usually want to use the most
+   specific match available.
+
+   This structure is inspired by a research on a fast packet processing using
+   DPDK. At 40-90Gbps the software gets rather busy. Simplest and fast solution
+   (given enough RAM) is to expand all network addresses from the most generic
+   (small mask) to the most detailed and put them in a hashmap - but that won't
+   scale to IPv6.
+
+   Processing 40-90Gbps traffic in software has it's quirks and might benefit
+   from solutions that aren't generic enough to be used by the Linux kernel. My
+   goal was to write a structure which can scale to IPv6 without loosing a speed
+   of a direct hashmap solution, and gain some knowledge about how the C++
+   evolved after the 2000.
+
+** Benchmarks.
+   Performance benchmarks in benchmark.cpp use real-life data - a GeoIP
+   database: GeoLite2 by MaxMind, available from https://www.maxmind.com.
+   (Creative Commons Attribution-ShareAlike 4.0).
+
+   Test executed on AMD Ryzen 7 1700X, with 32GB RAM Corsair MK32GX4M2A2666C16 -
+   2133MT/s (according to dmidecode), board B350M-A.
+
+*** Middle-sized data
+    Data set is created by using only GeoIP entries for Poland. They consist of
+    5469 entries from /12 to /32 for a total of 21250764 IPs when expanded
+
+    Structure, memory usage, generation time and performance in millions queries
+    per second (Mq/s) and nanoseconds per query (ns/q):
+    |---------------+--------+------------+---------+---------+-------+-------|
+    | Structure     | Gen    | Random 10% | Pos /32 | Pos /16 |   Neg | RAM   |
+    |---------------+--------+------------+---------+---------+-------+-------|
+    | Hashmap       | 1s     |   146 Mq/s |     235 |     235 |   146 | 949MB |
+    |               |        |   6.8 ns/q |    4.25 |    4.25 |  9.03 |       |
+    |---------------+--------+------------+---------+---------+-------+-------|
+    | Tri           | 4.28ms |         64 |      18 |    55.5 |  18.5 | 0.9MB |
+    |               |        |      15.65 |   55.82 |    18.1 | 53.87 |       |
+    |---------------+--------+------------+---------+---------+-------+-------|
+    | Flatri        | 4.28 + |         46 |    28.7 |    44.7 |    31 | 1.4MB |
+    |               | 0.92ms |       21.8 |   34.89 |   22.35 | 32.22 |       |
+    |---------------+--------+------------+---------+---------+-------+-------|
+    | TriTrie<8>    | 46ms   |        384 |   170.7 |     311 |   197 | 150MB |
+    |               |        |        2.6 |    5.85 |    3.21 |  5.06 |       |
+    |---------------+--------+------------+---------+---------+-------+-------|
+    | Flatritrie<8> | 46 +   |        380 |     179 |   341.7 |   198 | 160MB |
+    |               | 73ms   |       2.63 |    5.58 |    2.92 |  5.05 |       |
+    |---------------+--------+------------+---------+---------+-------+-------|
+    | Tritrie<6>    | 10ms   |        307 |   116.6 |   220.6 | 128.8 | 19MB  |
+    |               |        |       3.25 |    8.57 |    4.53 |  7.76 |       |
+    |---------------+--------+------------+---------+---------+-------+-------|
+    | Flatritrie<6> | 10 +   |      298.7 |     121 |   234.8 |   129 | 21MB  |
+    |               | 11ms   |       3.34 |    8.25 |    4.25 |  7.74 |       |
+    |---------------+--------+------------+---------+---------+-------+-------|
+    Note: Tri/flatri have somehow suboptimal implementation (for eg. CLZ using a loop).
+
+    Tests are as follows (see benchmark.cpp):
+    - Random 10%: Start querying with an initial IP known to exist in dataset, for
+      each test from 1 to 5mln use (IP ^ test_no). 8.39% IPs are found.
+    - Pos/32 - Ask for an IP defined deeply with /32 mask which exists in dataset
+      repetively (the same IP each time)
+    - Pos/16 - Same, but IP defined at /16
+    - Neg - IP which is not in the set.
+
+    Repetitively asking for the same data might seem weird but I had a real-life
+    usecase for it. Those tests are also simple to define and reproductible.
+    RANDOM 10% can behave differently depending on the data and jumping method.
+
+    Let's compare Flatritrie<8> to a hashmap (std::unordered_map):
+    - requires 17% of memory of hashmap (more for construction),
+    - requires 12% of hashmap construction time,
+    - repetitive querying of deep IP definition is slower (/32, 76%)
+      (probably hashmap uses CPU cache nicely in this case),
+    - faster for repetitive middle-deep IPs (/16, 145%) and negative queries (135%),
+    - much faster (260%) for querying varying IPs (>90% negative),
+    - on average, in this tests it has 144% of hashmap performance.
+    - neither Hashmap nor Flatritrie<8> would hold a whole GeoIP DB on my computer.
+
+    Relation between number of bits matched at each level, performance and RAM
+    (in million queries per second):
+    |----------+-------+-------+-------+-------+-------+-------+-------+-------|
+    | BITS     |     1 |     2 |     3 |     4 |     5 |     6 |     7 |     8 |
+    |----------+-------+-------+-------+-------+-------+-------+-------+-------|
+    | Rand 10% |  53.6 | 106.8 | 150.6 | 199.4 | 239.5 | 295.0 |   340 | 378.0 |
+    | Pos /32  |  17.7 |  44.5 |  65.7 |  89.7 | 104.2 | 120.0 | 143.8 | 178.5 |
+    | Pos /16  |  46.3 |  91.8 | 121.1 | 172.9 | 177.5 | 231.7 | 233.8 | 340.8 |
+    | Neg      | 18.07 |  47.5 |  69.5 |  94.2 | 110.3 | 128.4 | 155.6 | 197.9 |
+    |----------+-------+-------+-------+-------+-------+-------+-------+-------|
+    | RAM      | 1.2MB |   1MB | 2.2MB |   4MB |  10MB |  21MB | 161MB | 160MB |
+    |----------+-------+-------+-------+-------+-------+-------+-------+-------|
+
+    For loading a bigger dataset - a complete GeoIP database, the configuration
+    with 6 bits looks optimal:
+    - 1.3GB RAM,
+    - 268Mq/s for random queries (all found),
+    - 879ms constructing Tritrie (sexatrie...) and 755 Flatritrie.
+
+    At 7 BITS it takes over 8GB RAM, builds in 3+4.6s and queries at 256Mq/s.
+
+
+** References
+   - https://en.wikipedia.org/wiki/Trie
+   - https://en.wikipedia.org/wiki/Radix_tree
+   - https://en.wikipedia.org/wiki/Finite-state_machine

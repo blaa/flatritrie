@@ -17,6 +17,9 @@
 #include "hashmap.hpp"
 #include "utils.hpp"
 
+/* Tritrie and Flatritrie configuration */
+const int BITS = 8;
+
 /* Test suite with all tests. */
 template<typename T>
 void test_suite(T &algo, const std::string &name)
@@ -90,12 +93,13 @@ void test_trie(const std::vector<std::string> &test_data) {
 }
 
 void test_tritrie(const std::vector<std::string> &test_data) {
-    Tritrie::Tritrie<> tritrie;
+    Tritrie::Tritrie<BITS> tritrie;
+
     test_generation("Tritrie", tritrie, test_data);
     std::cout << "Nodes created " << tritrie.size() << std::endl;
     test_suite(tritrie, "Tritrie");
 
-    Tritrie::Flat<> flatritrie;
+    Tritrie::Flat<BITS> flatritrie;
     measure("Flatritrie generation",
             [&] () {
                 flatritrie.build(tritrie);
@@ -138,6 +142,7 @@ int main() {
     /* Sort testdata from most generic to most specific */
     auto test_data = load_test_data("test_data.txt");
 
+    /* To get accurate RAM measurements, test one structure at a time */
     show_mem_usage(true);
     test_trie(test_data);
 
