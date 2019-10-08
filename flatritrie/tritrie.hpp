@@ -23,25 +23,26 @@ constexpr int DEFAULT_BITS = 8;
 
 /*
  * Trie with more than 1 bit (2 branches) per level.
- *
  */
-template<int BITS=DEFAULT_BITS>
+template<int BITS=DEFAULT_BITS, typename K=uint32_t, typename V=int32_t, V def=-1>
 class Tritrie {
 protected:
+    constexpr static int MASK_MAX = std::numeric_limits<K>::max();
+    constexpr static int BITS_TOTAL = std::numeric_limits<K>::digits;
     constexpr static int CHILDREN = (1<<BITS);
 
     struct Node {
         /* Matched with triplets of bits */
         Node *child[CHILDREN] = {};
 
-        /* -1 for middle node */
-        int id;
+        /* 'def' for middle node */
+        V value;
 
-        Node() : id(-1) {}
+        Node() : value(def) {}
 
         void show() {
-            std::cout << "Node id="
-                      << this->id;
+            std::cout << "Node value="
+                      << this->value;
             for (int i=0; i < CHILDREN; i++) {
                 std::cout << " child_" << i << "=" << this->child[i] << " ";
             }
@@ -52,6 +53,9 @@ protected:
     Node root;
     int nodes_cnt = 0;
 
+    /* Mask during insertion can only grow or stay the same */
+    int last_mask = 0;
+
     Node *get_or_create(Node *cur, const uint8_t tri) {
         if (cur->child[tri] == NULL) {
             cur->child[tri] = new Node();
@@ -60,12 +64,15 @@ protected:
         return cur->child[tri];
     }
 
-    void add_ip(uint32_t ip, int32_t mask, int id) {
+    void add_ip(K ip, int32_t mask, V value) {
         int mask_left = mask;
         Node *cur = &this->root;
 
+        assert(mask >= this->last_mask);
+        this->last_mask = mask;
+
         while (mask_left >= BITS) {
-            const int tri = ip >> (32 - BITS);
+            const int tri = ip >> (BITS_TOTAL - BITS);
 
             cur = this->get_or_create(cur, tri);
 
@@ -76,10 +83,8 @@ protected:
 
         if (mask_left) {
             /* Handle last level appropriately */
-            /* mask_left is either 1 or 2 */
-            // std::cout << "  mask_left " << mask_left << std::endl;
 
-            ip >>= (32 - BITS);
+            ip >>= (BITS_TOTAL - BITS);
 
             /*
              * mask_left   final_mask  BITS
@@ -90,15 +95,17 @@ protected:
              * 2           1100           4
              * 3           1110           4
              * etc.
-             * (0xffffffff >> (32-mask_left)) << (BITS - mask_left)
+             * (0xffffffff >> (BITS_TOTAL-mask_left)) << (BITS - mask_left)
              */
-            const int mask = (0xffffffff >> (32 - mask_left)) << (BITS - mask_left);
+            const int mask = (
+                (MASK_MAX >> (BITS_TOTAL - mask_left)) << (BITS - mask_left)
+            );
 
             for (uint32_t tri = 0; tri < CHILDREN; tri++) {
                 if ((tri & mask) == ip) {
                     /* Insert here */
                     auto lvl = this->get_or_create(cur, tri);
-                    lvl->id = id;
+                    lvl->value = value;
                 }
             }
         } else {
@@ -106,11 +113,11 @@ protected:
             assert(ip == 0);
 
             /* No duplicates at the same level are acceptable */
-            if (cur->id != -1) {
-                std::cout << "New ID " << id << " collided with existing "
-                          << cur->id << std::endl;
+            if (cur->value != -1) {
+                std::cout << "New ID " << value << " collided with existing "
+                          << cur->value << std::endl;
             }
-            cur->id = id;
+            cur->value = value;
         }
     }
 
@@ -135,9 +142,7 @@ public:
         this->release(&this->root);
     }
 
-    void add(const std::string &addr, int id) {
-        // std::cout << "Add " << addr << " " << id << std::endl;
-
+    void add(const std::string &addr, V value) {
         std::vector<std::string> addr_mask;
         boost::split(addr_mask, addr, boost::is_any_of("/"));
         assert(addr_mask.size() == 2);
@@ -146,15 +151,15 @@ public:
         in_addr ip_parsed;
         int ret = inet_aton(addr_mask[0].c_str(), &ip_parsed);
         assert(ret != 0);
-        assert(mask >= 1 && mask <= 32);
-        if (ret == 0 || mask < 1 || mask > 32)
+        assert(mask >= 1 && mask <= BITS_TOTAL);
+        if (ret == 0 || mask < 1 || mask > BITS_TOTAL)
             throw std::exception();
 
         uint32_t ip_network = ntohl(ip_parsed.s_addr);
-        this->add_ip(ip_network, mask, id);
+        this->add_ip(ip_network, mask, value);
     }
 
-    int query_string(const std::string &addr) const {
+    V query_string(const std::string &addr) const {
         in_addr ip_parsed;
         int ret = inet_aton(addr.c_str(), &ip_parsed);
         assert(ret != 0);
@@ -164,29 +169,29 @@ public:
         return this->query(ip_network);
     }
 
-    int query(uint32_t ip) const {
+    V query(K ip) const {
         const Node *cur = &this->root;
-        int matched_id = -1;
-        for (int mask = 0; mask < 32; mask++) {
-            const int tri = ip >> (32 - BITS);
+        V matched = def;
+        for (int mask = 0; mask < BITS_TOTAL; mask++) {
+            const int tri = ip >> (BITS_TOTAL - BITS);
             cur = cur->child[tri];
             if (cur == NULL) {
                 break;
             }
-            if (cur->id != -1) {
-                matched_id = cur->id;
+            if (cur->value != -1) {
+                matched = cur->value;
                 /* We will continue search, as there might be a closer match */
             }
             ip <<= BITS;
         }
-        return matched_id;
+        return matched;
     }
 
     int size() const {
         return this->nodes_cnt;
     }
 
-    template<int B, int PS> friend class Flat;
+    template<int B, typename TK, typename TV, TV tdef, int PAGE_SIZE> friend class Flat;
 };
 
 };

@@ -13,19 +13,21 @@
 
 namespace Test {
 
-const std::vector<std::string> data = {
-    "255.0.0.0/8",    // 0
-    "255.255.0.0/16", // 1
-    "10.255.0.0/16",  // 2
-    "10.255.0.3/32",  // 3
+const std::vector<std::pair<std::string, int>> data = {
+    /* Address, ID */
+    {"255.0.0.0/8", 0},
+    {"255.255.0.0/16", 1},
+    {"10.255.0.0/16", 2},
 
     /* Colliding testcases */
-    "95.175.112.0/21", // 4
-    "95.175.144.0/21", // 5
+    {"95.175.112.0/21", 4},
+    {"95.175.144.0/21", 5},
 
     /* Collides tritrie */
-    "170.85.200.0/22", // 6
-    "170.85.202.0/24", // 7
+    {"170.85.200.0/22", 6},
+    {"170.85.202.0/24", 7},
+
+    {"10.255.0.3/32", 3},
 };
 
 const std::vector<std::pair<std::string, int>> testcases = {
@@ -60,6 +62,7 @@ const std::vector<std::pair<std::string, int>> testcases = {
 
 template<typename T>
 int runner(T &algo) {
+    int successes = 0;
     int failures = 0;
     for (auto &testcase: Test::testcases) {
         int ret = algo.query_string(testcase.first);
@@ -70,10 +73,11 @@ int runner(T &algo) {
                       << std::endl;
             failures += 1;
         } else {
-            std::cout << "TEST   OK " << testcase.first
-                      << std::endl;
+            successes += 1;
         }
     };
+    std::cout << "TESTS: OK=" << successes << " FAILED="
+              << failures << std::endl;
     std::cout << std::endl;
     return failures;
 }
@@ -82,10 +86,8 @@ int runner(T &algo) {
 
 int testcase_map() {
     IPMap<> map;
-    int id = 0;
     for (auto &item: Test::data) {
-        map.add(item, id);
-        id++;
+        map.add(item.first, item.second);
     }
 
     std::cout << "Map testcases" << std::endl;
@@ -96,10 +98,8 @@ int testcase_map() {
 int testcase_trie() {
     int ret;
     Trie trie;
-    int id = 0;
     for (auto &item: Test::data) {
-        trie.add(item, id);
-        id++;
+        trie.add(item.first, item.second);
     }
 
     std::cout << "Trie testcases" << std::endl;
@@ -116,23 +116,25 @@ int testcase_trie() {
     return ret;
 }
 
+template<int BITS>
 int testcase_tritrie() {
     int ret = 0;
-    Tritrie::Tritrie<> tritrie;
+    Tritrie::Tritrie<BITS> tritrie;
 
+    std::cout << "Generating tritrie<" << BITS << ">" << std::endl;
     int id = 0;
     for (auto &item: Test::data) {
-        tritrie.add(item, id);
+        tritrie.add(item.first, item.second);
         id++;
     }
 
-    std::cout << "Testing tritrie" << std::endl;
+    std::cout << "Testing tritrie<" << BITS << ">" << std::endl;
     ret = Test::runner<>(tritrie);
 
     /* FlaTritrie test */
-    Tritrie::Flat<> flatritrie;
+    Tritrie::Flat<BITS> flatritrie;
     flatritrie.build(tritrie);
-    std::cout << "Testing flatritrie" << std::endl;
+    std::cout << "Testing flatritrie<" << BITS << ">" << std::endl;
     ret += Test::runner<>(flatritrie);
 
     /* Should build second time as well */
@@ -145,6 +147,16 @@ int main() {
     int ret = 0;
     ret = testcase_map();
     ret += testcase_trie();
-    ret += testcase_tritrie();
+
+    /* meh */
+    ret += testcase_tritrie<1>();
+    ret += testcase_tritrie<2>();
+    ret += testcase_tritrie<3>();
+    ret += testcase_tritrie<4>();
+    ret += testcase_tritrie<5>();
+    ret += testcase_tritrie<6>();
+    ret += testcase_tritrie<7>();
+    ret += testcase_tritrie<8>();
+
     return ret;
 }

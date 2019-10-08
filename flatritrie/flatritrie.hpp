@@ -7,7 +7,10 @@
 #ifndef _FLATRITRIE_H_
 #define _FLATRITRIE_H_
 
+#include <limits>
 #include <tritrie.hpp>
+
+namespace Tritrie {
 
 /*
  * A specialized dictionary-like structure for mapping keys (IP addresses) to
@@ -24,18 +27,18 @@
  * - Doesn't require expansion of ip/masks.
  * - Limits random memory reads when possible.
  */
-
-namespace Tritrie {
-
-template<int BITS=DEFAULT_BITS, int PAGE_SIZE=10000>
+template<int BITS=DEFAULT_BITS,
+         typename K=uint32_t, typename V=int32_t,
+         V def=-1, int PAGE_SIZE=10000>
 class Flat {
 protected:
+    constexpr static int BITS_TOTAL = std::numeric_limits<K>::digits;
     constexpr static int CHILDREN = (1<<BITS);
-    constexpr static int BITS_COMPLEMENT = (32 - BITS);
+    constexpr static int BITS_COMPLEMENT = (BITS_TOTAL - BITS);
 
     struct Entry {
-        /* ID if reached this place */
-        int id = -1;
+        /* VALUE if reached this place */
+        V value = def;
 
         /* {000 -> Entry, 001 -> Entry, 010 -> NULL, ...} for BITS=3 */
         Entry *child[CHILDREN];
@@ -69,7 +72,7 @@ protected:
         }
 
         Entry *entry = this->alloc_entry();
-        entry->id = node->id;
+        entry->value = node->value;
 
         for (int i = 0; i < CHILDREN; i++) {
             entry->child[i] = build_node(node->child[i]);
@@ -102,7 +105,7 @@ public:
         this->build_node(&trie.root);
     }
 
-    int query_string(const std::string &addr) const {
+    V query_string(const std::string &addr) const {
         in_addr ip_parsed;
         int ret = inet_aton(addr.c_str(), &ip_parsed);
         if (ret == 0)
@@ -112,28 +115,28 @@ public:
         return this->query(ip_network);
     }
 
-    int query(uint32_t ip) const {
+    V query(K ip) const {
         /* Querying uninitialized structure will fail */
         assert(this->used_total > 0);
 
         const Entry *cur = &this->pages[0][0];
 
-        int matched_id = -1;
+        V matched = def;
         for (;;) {
-            const int tri = ip >> (BITS_COMPLEMENT);
+            const int tri = ip >> BITS_COMPLEMENT;
             const auto *child = cur->child[tri];
 
             if (child == NULL) {
                 /* Nowhere to run */
-                return matched_id;
+                return matched;
             }
             cur = child;
-            if (cur->id != -1) {
-                matched_id = cur->id;
+            if (cur->value != def) {
+                matched = cur->value;
             }
             ip <<= BITS;
         }
-        return matched_id;
+        return matched;
     }
 
     int size() const {

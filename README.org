@@ -1,19 +1,24 @@
 * Flatritrie
-  C++ template implementing an optimized Trie structure for matching IP
-  addresses to metadata (like GeoIP, index, etc.) with following properties:
+  This repository contains a set of C++ templates implementing an optimized Trie
+  structures for matching IP addresses to metadata (like GeoIP, routing, ID,
+  etc.). This structures (Tritrie and Flatritrie) were designed to:
+  - return the most specific match (a longest-prefix match),
+  - work with both 32-bit and 128-bit keyspace (IPv4 and IPv6),
+  - be optimized for query speed (not for memory usage nor load time),
+  - fit into the server memory, make use of cache if possible,
+  - work with DPDK to handle high network throughput.
 
-  - Immutable after construction.
-  - Optimized for query speed, not for memory usage.
-  - Returns the most specific match (largest mask).
-  - Must fit into the memory and should load whole GeoIP database under 1 second.
-  - Should work with both IPv4 and IPv6.
+  As a result they also:
+  - are immutable after construction,
+  - can have multiple lockless readers (since immutable),
+  - load a complete GeoIP database in 0.5-1 seconds.
+  
+  Tritrie matches IP addresses by 1 to 8 bits at a time. The "tri" in the name
+  works best for 3 BITS obviously. Flatritrie is a similar flattened version.
 
-  It's implemented as a flattened Trie, which matches IP addresses by 1 to 8
-  bits at a time. The "tri" in the name works best for 3 BITS obviously.
-
-** Example
+** Query example
    Tritrie<3> or Flatritrie<3> will match address 3 bits at a time, for at most
-   11 memory accesses. With following entries:
+   11 memory accesses for IPv4. With following entries:
    - 123.250.0.0/16 -> 300
    - 123.250.85.17/32 -> 400
 
@@ -30,6 +35,21 @@
   tries to pack the data better in the memory to achieve better cache locality.
   It's construction is similar to a "Finite State Automaton" with states defined
   in a table.
+
+** Construction by example
+   Inserting into Tritrie<B> will start from the Trie Root, in each step take B
+   bits from the address and check if there's a node at current level. If
+   there's none - new entry is allocated and linked into the Trie. Pretty much
+   generic trie with one quirk.
+
+   The inserted mask can split the last "level". During the insertion of an IP
+   =[111][101][10X]= (mask /8) Tritrie<3> will traverse first 2 complete levels,
+   and then insert two nodes, one for =[100]= and another one for =[101]=. If
+   there's already a node (for example =[111][101][100]/9=) it will be
+   overwritten. To achieve correct behaviour, the input data needs to be
+   inserted from the most generic masks, to most specific.
+
+   Flatritrie build it's structure based on an existing Tritrie.
 
 ** Context
    Matching an IP address to some additional metadata is a known and a common
@@ -125,6 +145,7 @@
     | RAM      | 1.2MB |   1MB | 2.2MB |   4MB |  10MB |  21MB | 161MB | 160MB |
     |----------+-------+-------+-------+-------+-------+-------+-------+-------|
 
+*** Whole GeoIP Database
     For loading a bigger dataset - a complete GeoIP database, the configuration
     with 6 bits looks optimal:
     - 1.3GB RAM,
@@ -133,8 +154,18 @@
 
     At 7 BITS it takes over 8GB RAM, builds in 3+4.6s and queries at 256Mq/s.
 
+** Next steps
+   A bit more of a cleanup, IPv6 tests.
+
+   Flatritrie and Tritrie aren't much different in benchmarks. Possibly using
+   Flatritrie table allocator in Tritrie would bury the difference.
+
+   Flatritrie, on the other hand, could optimise table positions with
+   after-creation knowledge to gain better cache locality than it does
+   currently.
 
 ** References
    - https://en.wikipedia.org/wiki/Trie
    - https://en.wikipedia.org/wiki/Radix_tree
    - https://en.wikipedia.org/wiki/Finite-state_machine
+   - https://en.wikipedia.org/wiki/Longest_prefix_match
