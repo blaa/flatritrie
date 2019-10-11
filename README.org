@@ -155,14 +155,20 @@
     At 7 BITS it takes over 8GB RAM, builds in 3+4.6s and queries at 256Mq/s.
 
 ** Next steps
-   A bit more of a cleanup, IPv6 tests.
+   A bit more of a cleanup.
 
    Flatritrie and Tritrie aren't much different in benchmarks. Possibly using
-   Flatritrie table allocator in Tritrie would bury the difference.
+   Flatritrie table allocator in Tritrie would bury the difference. Allocating
+   entries grouped by mask ranges might be sensible.
 
    Flatritrie, on the other hand, could optimise table positions with
    after-creation knowledge to gain better cache locality than it does
    currently.
+
+   Version <8> could be simpler, work directly with network-byte order
+   addresses.
+
+   Benchmark with external structure would be insightful.
 
 ** References
    - https://en.wikipedia.org/wiki/Trie
