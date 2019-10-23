@@ -12,13 +12,14 @@
 #include <fstream>
 #include <unordered_map>
 #include <boost/algorithm/string.hpp>
+#include <charconv>
 
 #include "tritrie.hpp"
 #include "flatritrie.hpp"
 #include "utils.hpp"
 
 const int POLAND = 798544;
-const int BITS = 6;
+const int BITS = 4;
 
 template<typename Fn>
 void read_csv(const std::string path, Fn reader) {
@@ -34,10 +35,9 @@ void read_csv(const std::string path, Fn reader) {
 }
 
 auto geo_example() {
-    Tritrie::Tritrie<BITS> tritrie;
-
+    std::vector<std::pair<std::string, int>> geo_data;
     auto net_loader = \
-        [&tritrie] (auto &row) {
+        [&geo_data] (auto &row) {
             int geoname_id;
             if (row[1].size() > 0) {
                 /* geoname_id */
@@ -49,7 +49,7 @@ auto geo_example() {
                 std::cout << "No country for " << row[0] << std::endl;
                 geoname_id = -1;
             }
-            tritrie.add(row[0], geoname_id);
+            geo_data.push_back({row[0], geoname_id});
         };
 
     // TODO: Use it.
@@ -65,9 +65,35 @@ auto geo_example() {
     read_csv("GeoLite2-Country-Locations-en.csv", country_loader);
 
     show_mem_usage(false);
-    measure("Trie generation for GeoIP Database",
+    measure("Reading GeoIP Database",
             [&net_loader] () {
                 read_csv("GeoLite2-Country-Blocks-IPv4.csv", net_loader);
+            });
+
+    /* Sort by mask */
+    std::sort(geo_data.begin(),
+              geo_data.end(),
+              [](const auto &a, const auto &b) {
+                  const auto &addr_a = a.first;
+                  const auto &addr_b = b.first;
+                  int mask_a = 0, mask_b = 0;
+                  size_t found = addr_a.find("/");
+                  assert(found != std::string::npos);
+                  std::from_chars(addr_a.data() + found+1,
+                                  addr_a.data() + addr_a.size(), mask_a);
+
+                  found = addr_b.find("/");
+                  std::from_chars(addr_b.data() + found+1,
+                                  addr_b.data() + addr_b.size(), mask_b);
+                  return mask_a < mask_b;
+              });
+
+    Tritrie::Tritrie<BITS> tritrie;
+    measure("Tritrie generation for GeoIP Database",
+            [&tritrie, &geo_data] () {
+                for (auto &item: geo_data) {
+                    tritrie.add(item.first, item.second);
+                }
             });
 
     std::cout << "Tritrie nodes created " << tritrie.size() << std::endl;
@@ -80,12 +106,12 @@ auto geo_example() {
     if (ret != POLAND)
         throw std::exception();
 
-    int ip_initial = ip_to_hl("83.0.0.0");
+    int ip_initial = 0;
 
-    test_query("Tritrie geo query test",
+    test_query("Tritrie random geo query test",
                tritrie,
                ip_initial,
-               [] (int32_t ip, int i) {return ip + (11*i % 100000);},
+               [] (int32_t ip, int i) {return fastrand(); /* ip + (11*i % 100000);*/},
                tests);
 
     /*
@@ -106,10 +132,10 @@ auto geo_example() {
 
     show_mem_usage();
 
-    test_query("Tritrie geo query test",
-               tritrie,
+    test_query("Flatritrie random geo query test",
+               flatritrie,
                ip_initial,
-               [] (int32_t ip, int i) {return ip + (11*i % 100000);},
+               [] (int32_t ip, int i) {return fastrand(); /* ip + (11*i % 100000);*/},
                tests);
 }
 

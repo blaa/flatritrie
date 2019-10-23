@@ -86,6 +86,7 @@ protected:
     void add_ip(K ip, int mask, V value) {
         int mask_left = mask;
         Node *cur = &this->root;
+        V cur_value = this->root.value;
 
         if (mask < this->last_mask) {
             std::cerr << "Inserting mask " << mask
@@ -96,15 +97,19 @@ protected:
         assert(BITS_TOTAL > BITS);
         this->last_mask = mask;
 
-        while (mask_left >= BITS) { /* TODO: CONV to for */
+        for (; mask_left >= BITS; mask_left -= BITS) {
+            if (value == cur_value) {
+                /* Deduplicate entries with the same value, but on
+                 * different mask levels */
+                return;
+            }
+
             /* Shave "BITS" most significant bits */
             const int tri = ip >> (BITS_TOTAL - BITS);
             ip <<= BITS;
 
             cur = this->get_or_create(cur, tri);
-
-            /* Next one! */
-            mask_left -= BITS;
+            cur_value = cur->value;
         }
 
         /* Handle last level appropriately */
