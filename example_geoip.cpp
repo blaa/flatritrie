@@ -106,12 +106,9 @@ auto geo_example() {
     if (ret != POLAND)
         throw std::exception();
 
-    int ip_initial = 0;
-
     test_query("Tritrie random geo query test",
                tritrie,
-               ip_initial,
-               [] (int32_t ip, int i) {return fastrand(); /* ip + (11*i % 100000);*/},
+               [] (int i) {return fastrand();},
                tests);
 
     /*
@@ -134,8 +131,7 @@ auto geo_example() {
 
     test_query("Flatritrie random geo query test",
                flatritrie,
-               ip_initial,
-               [] (int32_t ip, int i) {return fastrand(); /* ip + (11*i % 100000);*/},
+               [] (int i) {return fastrand();},
                tests);
 }
 

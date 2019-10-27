@@ -3,8 +3,8 @@
   structures for matching IP addresses to metadata (like GeoIP, routing, ID,
   etc.). This structures (Tritrie and Flatritrie) were designed to:
   - return the most specific match (a longest-prefix match),
-  - work with both 32-bit and 128-bit keyspace (IPv4 and IPv6),
-  - be optimized for query speed (not for memory usage nor load time),
+  - work with 32-bit (IPv4) and 128-bit (IPv6) keyspace,
+  - be queried fast, at the expense of high memory usage and bigger load time,
   - fit into the server memory, make use of cache if possible,
   - work with DPDK to handle high network throughput.
 
@@ -12,7 +12,7 @@
   - are immutable after construction,
   - can have multiple lockless readers (since immutable),
   - load a complete GeoIP database in 0.5-1 seconds.
-  
+
   Tritrie matches IP addresses by 1 to 8 bits at a time. The "tri" in the name
   works best for 3 BITS obviously. Flatritrie is a similar flattened version.
 
@@ -154,6 +154,30 @@
 
     At 7 BITS it takes over 8GB RAM, builds in 3+4.6s and queries at 256Mq/s.
 
+
+** Comparison with LCtree implementation
+   Benchmark with a BSD-licensed LC-trie implementation:
+   https://github.com/chuckination/lctrie.git
+
+   Data sets based on parts of BGP routing table from lctrie repo:
+   - Tiny set: 5000 entries, 38.2% matched during testing.
+   - Big: 590040 entries, 48.6% matched.
+   - GeoIP: 336109 entries, 87.5% matched.
+
+   |-------+------------+---------+----------------+----------------+-----------|
+   | Set   | Tritrie 8b | Flat 8b | Flat 8b, union | Flat 4b, union | LCtrie    |
+   |-------+------------+---------+----------------+----------------+-----------|
+   | Tiny  | 67 Mq/s    | 75 Mq/s | 79.6 Mq/s      | 77.4 Mq/s      | 62.5 Mq/s |
+   | Big   | 49 Mq/s    | 59 Mq/s | 62.1 Mq/s      | 67.4 Mq/s      | 50.7 Mq/s |
+   | GeoIP | -          | -       | -              | 72 Mq/s        | 112 Mq/s  |
+   |-------+------------+---------+----------------+----------------+-----------|
+
+   Flatritrie union uses a union to read IP byte by byte instead of bit
+   shifting. LCtrie is close in terms of query performance, uses WAY less
+   memory, builds faster - but can sometimes be beaten.
+
+   Full GeoIP dataset doesn't fit into memory when using 8 BIT levels.
+
 ** Next steps
    A bit more of a cleanup.
 
@@ -167,8 +191,6 @@
 
    Version <8> could be simpler, work directly with network-byte order
    addresses.
-
-   Benchmark with external structure would be insightful.
 
 ** References
    - https://en.wikipedia.org/wiki/Trie

@@ -10,6 +10,7 @@
 #include <functional>
 #include <bitset>
 #include <boost/algorithm/string.hpp>
+#include <charconv>
 
 #include "trie.hpp"
 #include "tritrie.hpp"
@@ -17,68 +18,60 @@
 #include "hashmap.hpp"
 #include "utils.hpp"
 
-/* Tritrie and Flatritrie configuration */
-const int BITS = 8;
-
 /* Test suite with all tests. */
 template<typename T>
-void test_suite(T &algo, const std::string &name)
+void test_suite(T &algo, const std::string &name,
+                const std::vector<uint32_t> &test_queries)
 {
     std::cout << "== Test Suite for " << name << std::endl;
-
-    /* Used IPs are picked at random from test data */
-
-    /* IP from the beginning of a large range of matching IPs */
-    const uint32_t ip_initial = ip_to_hl("77.83.16.0");
 
     /* Selected to be a deep /32 entry */
     const uint32_t ip_positive_deep = ip_to_hl("72.247.182.140");
 
-    /* Middle /16 entry */
-    const uint32_t ip_positive_middle = ip_to_hl("109.241.1.2");
-
     /* Selected to be a deep /32 entry */
     const uint32_t ip_negative = ip_to_hl("134.191.220.74");
 
-    test_query("Random query test",
+    const int queries_cnt = test_queries.size();
+
+    test_query("True random query test",
                algo,
-               ip_initial,
-               [] (int32_t ip, int i) {return ip ^ i;});
+               [] (int i) {return fastrand();});
+
+    test_query("Positive random query test",
+               algo,
+               [test_queries, queries_cnt] (int i) {
+                 return test_queries[i % queries_cnt];
+               });
 
     test_query("Repetitive positive /32 query test",
                algo,
-               ip_positive_deep,
-               [] (int32_t ip, int i) {return ip;});
-
-    test_query("Repetitive positive /16 query test",
-               algo,
-               ip_positive_middle,
-               [] (int32_t ip, int i) {return ip;});
+               [ip_positive_deep] (int i) {return ip_positive_deep;});
 
     test_query("Repetitive negative query test",
                algo,
-               ip_negative,
-               [] (int32_t ip, int i) {return ip;});
+               [ip_negative] (int i) {return ip_negative;});
 
     show_mem_usage(false);
 }
 
-void test_map(const std::vector<std::string> &test_data) {
+void test_map(const std::vector<std::string> &test_data,
+              const std::vector<uint32_t> &test_queries) {
     /* Construct map */
     IPMap<> map;
     test_generation("Hashmap", map, test_data);
     std::cout << "Hashmap size is " << map.size() << std::endl;
 
-    test_suite(map, "Hashmap");
+    test_suite(map, "Hashmap", test_queries);
     std::cout << std::endl;
 }
 
-void test_trie(const std::vector<std::string> &test_data) {
+void test_trie(const std::vector<std::string> &test_data,
+               const std::vector<uint32_t> &test_queries) {
     Trie trie;
     test_generation("Trie", trie, test_data);
     std::cout << "Nodes created " << trie.size() << std::endl;
 
-    test_suite(trie, "Trie");
+    test_suite(trie, "Trie", test_queries);
 
     FlaTrie flatrie;
     measure("Flatrie generation",
@@ -86,51 +79,30 @@ void test_trie(const std::vector<std::string> &test_data) {
                 flatrie.build(trie);
             });
 
-    test_suite(flatrie, "Flatrie");
+    test_suite(flatrie, "Flatrie", test_queries);
 
     show_mem_usage();
     std::cout << std::endl;
 }
 
-void test_tritrie(const std::vector<std::string> &test_data) {
+template<int BITS=8>
+void test_tritrie(const std::string &name,
+                  const std::vector<std::string> &test_data,
+                  const std::vector<uint32_t> &test_queries) {
     Tritrie::Tritrie<BITS> tritrie;
 
-    test_generation("Tritrie", tritrie, test_data);
+    test_generation("Tritrie" + name, tritrie, test_data);
     std::cout << "Nodes created " << tritrie.size() << std::endl;
-    test_suite(tritrie, "Tritrie");
+    test_suite(tritrie, "Tritrie" + name, test_queries);
 
     Tritrie::Flat<BITS> flatritrie;
-    measure("Flatritrie generation",
+    measure("Flatritrie" + name + " generation",
             [&] () {
                 flatritrie.build(tritrie);
             });
-    test_suite(flatritrie, "Flatritrie");
+    test_suite(flatritrie, "Flatritrie" + name, test_queries);
     flatritrie.debug();
     std::cout << std::endl;
-}
-
-std::vector<std::string> load_test_data(const std::string &path) {
-    std::ifstream in(path);
-    std::string line;
-    std::vector<std::string> addresses;
-
-    while (getline(in, line)) {
-        addresses.push_back(line);
-    }
-    /* Sort by mask - mostly required for hashmap */
-    std::sort(addresses.begin(),
-              addresses.end(),
-              [](const std::string &a, const std::string &b) {
-                  int mask_a, mask_b;
-                  std::vector<std::string> addr_mask;
-                  boost::split(addr_mask, a, boost::is_any_of("/"));
-                  mask_a = atoi(addr_mask[1].c_str());
-
-                  boost::split(addr_mask, b, boost::is_any_of("/"));
-                  mask_b = atoi(addr_mask[1].c_str());
-                  return mask_a < mask_b;
-              });
-    return addresses;
 }
 
 int main() {
@@ -139,17 +111,21 @@ int main() {
               << std::endl;
     #endif
 
-    /* Sort testdata from most generic to most specific */
+    /* Prepare subnet data and query data */
     auto test_data = load_test_data("test_data.txt");
+    auto test_queries = get_rnd_test_data(test_data);
 
     /* To get accurate RAM measurements, test one structure at a time */
     show_mem_usage(true);
-    test_trie(test_data);
+    test_trie(test_data, test_queries);
 
     show_mem_usage(true);
-    test_tritrie(test_data);
+    test_tritrie<8>("<8>", test_data, test_queries);
 
     show_mem_usage(true);
-    test_map(test_data);
+    test_tritrie<4>("<4>", test_data, test_queries);
+
+    show_mem_usage(true);
+    test_map(test_data, test_queries);
     return 0;
 }
