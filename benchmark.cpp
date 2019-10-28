@@ -15,6 +15,8 @@
 #include "trie.hpp"
 #include "tritrie.hpp"
 #include "flatritrie.hpp"
+// #include "flat4.hpp"
+
 #include "hashmap.hpp"
 #include "utils.hpp"
 
@@ -121,6 +123,9 @@ int main() {
 
     show_mem_usage(true);
     test_tritrie<8>("<8>", test_data, test_queries);
+
+    show_mem_usage(true);
+    test_tritrie<6>("<6>", test_data, test_queries);
 
     show_mem_usage(true);
     test_tritrie<4>("<4>", test_data, test_queries);

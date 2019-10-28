@@ -17,6 +17,7 @@
 #include "tritrie.hpp"
 #include "flatritrie.hpp"
 #include "utils.hpp"
+// #include "flat4.hpp"
 
 const int POLAND = 798544;
 const int BITS = 4;

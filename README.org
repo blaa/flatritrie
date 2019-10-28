@@ -5,16 +5,36 @@
   - return the most specific match (a longest-prefix match),
   - work with 32-bit (IPv4) and 128-bit (IPv6) keyspace,
   - be queried fast, at the expense of high memory usage and bigger load time,
-  - fit into the server memory, make use of cache if possible,
   - work with DPDK to handle high network throughput.
 
   As a result they also:
   - are immutable after construction,
-  - can have multiple lockless readers (since immutable),
-  - load a complete GeoIP database in 0.5-1 seconds.
+  - can have multiple lockless readers (since immutable).
 
-  Tritrie matches IP addresses by 1 to 8 bits at a time. The "tri" in the name
-  works best for 3 BITS obviously. Flatritrie is a similar flattened version.
+  Tritrie is a sparse trie that matches IP addresses by 1 to 8 bits at a time.
+  The "tri" in the name works best for 3 BITS obviously. Flatritrie is a
+  similar, flattened version.
+
+  Made them out of curiousity if simple enough algorithm can outperform a
+  hashmap, which I though would be fast for small datasets. It's not. For
+  certain datasets and query patterns they seem to outperform (at least one
+  implementation of) LC-trie.
+
+** Context
+   Matching an IP address to some additional metadata is a known and a common
+   problem. Hardware routers do it with a TCAM, Linux kernel does it with
+   LC-tries (Level-Compressed tries). IP like a.b.c.d can be matched by
+   a.0.0.0/8 or a.b.c.0/24 entry and we will usually want to use the most
+   specific match available.
+
+   Simplest, a bit naive, but quite fast solution (given enough RAM) is to
+   expand all network addresses from the most generic (small mask) to the most
+   detailed and put them in a hashmap - but that won't scale to IPv6.
+
+   The idea was to check whether trivial querying operations (few lookups, on
+   huge structure in RAM) could outperform a more memory-compact solutions but
+   with a more complicated query routine. And to gain some knowledge about how
+   the C++ evolved after the 2000.
 
 ** Query example
    Tritrie<3> or Flatritrie<3> will match address 3 bits at a time, for at most
@@ -51,27 +71,8 @@
 
    Flatritrie build it's structure based on an existing Tritrie.
 
-** Context
-   Matching an IP address to some additional metadata is a known and a common
-   problem. Hardware routers might do it with a TCAM, Linux kernel does it with
-   LC-tries (Level-Compressed tries). IP like a.b.c.d can be matched by
-   a.0.0.0/8 or a.b.c.0/24 entry and we will usually want to use the most
-   specific match available.
-
-   This structure is inspired by a research on a fast packet processing using
-   DPDK. At 40-90Gbps the software gets rather busy. Simplest and fast solution
-   (given enough RAM) is to expand all network addresses from the most generic
-   (small mask) to the most detailed and put them in a hashmap - but that won't
-   scale to IPv6.
-
-   Processing 40-90Gbps traffic in software has it's quirks and might benefit
-   from solutions that aren't generic enough to be used by the Linux kernel. My
-   goal was to write a structure which can scale to IPv6 without loosing a speed
-   of a direct hashmap solution, and gain some knowledge about how the C++
-   evolved after the 2000.
-
 ** Benchmarks.
-   Performance benchmarks in benchmark.cpp use real-life data - a GeoIP
+   Performance benchmarks in benchmark.cpp use a real-life data - a GeoIP
    database: GeoLite2 by MaxMind, available from https://www.maxmind.com.
    (Creative Commons Attribution-ShareAlike 4.0).
 
@@ -80,107 +81,104 @@
 
 *** Middle-sized data
     Data set is created by using only GeoIP entries for Poland. They consist of
-    5469 entries from /12 to /32 for a total of 21250764 IPs when expanded
+    5469 entries from /12 to /32 for a total of 21250764 IPs when expanded.
+    Benchmarks are sensitive to data, query depths, etc.
 
     Structure, memory usage, generation time and performance in millions queries
     per second (Mq/s) and nanoseconds per query (ns/q):
-    |---------------+--------+------------+---------+---------+-------+-------|
-    | Structure     | Gen    | Random 10% | Pos /32 | Pos /16 |   Neg | RAM   |
-    |---------------+--------+------------+---------+---------+-------+-------|
-    | Hashmap       | 1s     |   146 Mq/s |     235 |     235 |   146 | 949MB |
-    |               |        |   6.8 ns/q |    4.25 |    4.25 |  9.03 |       |
-    |---------------+--------+------------+---------+---------+-------+-------|
-    | Tri           | 4.28ms |         64 |      18 |    55.5 |  18.5 | 0.9MB |
-    |               |        |      15.65 |   55.82 |    18.1 | 53.87 |       |
-    |---------------+--------+------------+---------+---------+-------+-------|
-    | Flatri        | 4.28 + |         46 |    28.7 |    44.7 |    31 | 1.4MB |
-    |               | 0.92ms |       21.8 |   34.89 |   22.35 | 32.22 |       |
-    |---------------+--------+------------+---------+---------+-------+-------|
-    | TriTrie<8>    | 46ms   |        384 |   170.7 |     311 |   197 | 150MB |
-    |               |        |        2.6 |    5.85 |    3.21 |  5.06 |       |
-    |---------------+--------+------------+---------+---------+-------+-------|
-    | Flatritrie<8> | 46 +   |        380 |     179 |   341.7 |   198 | 160MB |
-    |               | 73ms   |       2.63 |    5.58 |    2.92 |  5.05 |       |
-    |---------------+--------+------------+---------+---------+-------+-------|
-    | Tritrie<6>    | 10ms   |        307 |   116.6 |   220.6 | 128.8 | 19MB  |
-    |               |        |       3.25 |    8.57 |    4.53 |  7.76 |       |
-    |---------------+--------+------------+---------+---------+-------+-------|
-    | Flatritrie<6> | 10 +   |      298.7 |     121 |   234.8 |   129 | 21MB  |
-    |               | 11ms   |       3.34 |    8.25 |    4.25 |  7.74 |       |
-    |---------------+--------+------------+---------+---------+-------+-------|
-    Note: Tri/flatri have somehow suboptimal implementation (for eg. CLZ using a loop).
+    |---------------+--------+-----------+----------+---------+---------+-------|
+    | Structure     | Gen    |  Rnd 1.5% | Rnd 100% | Rep Pos | Rep Neg | RAM   |
+    |---------------+--------+-----------+----------+---------+---------+-------|
+    | Hashmap       | 1s     |   12 Mq/s |     19.1 |     233 |     233 | 949MB |
+    |               |        | 80.5 ns/q |     52.3 |    4.28 |    4.29 |       |
+    |---------------+--------+-----------+----------+---------+---------+-------|
+    | Tri           | 4.28ms |      39.8 |     11.3 |      18 |    18.5 | 0.9MB |
+    |               |        |           |          |         |         |       |
+    |---------------+--------+-----------+----------+---------+---------+-------|
+    | TriTrie<8>    | 46ms   |     105.7 |     26.2 |   170.5 |   197.8 | 150MB |
+    |               |        |      9.46 |    38.18 |    5.86 |    5.05 |       |
+    |---------------+--------+-----------+----------+---------+---------+-------|
+    | Flatritrie<8> | 46 +   |   131.955 |    30.64 |  150.17 |   197.9 | 160MB |
+    |               | 73ms   |      7.57 |    32.64 |    6.65 |    5.05 |       |
+    |---------------+--------+-----------+----------+---------+---------+-------|
+    | Tritrie<6>    | 10ms   |     130.3 |    34.35 |     106 |     129 | 19MB  |
+    |               |        |           |          |         |         |       |
+    |---------------+--------+-----------+----------+---------+---------+-------|
+    | Flatritrie<6> | 3.67 + |       138 |    34.19 |   121.1 |   129.4 | 21MB  |
+    |               | 8.22ms |      7.24 |    29.24 |    8.25 |    7.72 |       |
+    |---------------+--------+-----------+----------+---------+---------+-------|
+    | Flatritrie<4> | 2.51 + |     95.87 |    40.22 |   91.64 |      96 |       |
+    |               | 1.86   |           |          |         |         |       |
+    |---------------+--------+-----------+----------+---------+---------+-------|
+    Fri/flatri have suboptimal implementation (for eg. CLZ using a loop). See
+    lower for lc-trie comparison.
 
-    Tests are as follows (see benchmark.cpp):
-    - Random 10%: Start querying with an initial IP known to exist in dataset, for
-      each test from 1 to 5mln use (IP ^ test_no). 8.39% IPs are found.
-    - Pos/32 - Ask for an IP defined deeply with /32 mask which exists in dataset
-      repetively (the same IP each time)
-    - Pos/16 - Same, but IP defined at /16
-    - Neg - IP which is not in the set.
-
-    Repetitively asking for the same data might seem weird but I had a real-life
-    usecase for it. Those tests are also simple to define and reproductible.
-    RANDOM 10% can behave differently depending on the data and jumping method.
-
-    Let's compare Flatritrie<8> to a hashmap (std::unordered_map):
-    - requires 17% of memory of hashmap (more for construction),
-    - requires 12% of hashmap construction time,
-    - repetitive querying of deep IP definition is slower (/32, 76%)
-      (probably hashmap uses CPU cache nicely in this case),
-    - faster for repetitive middle-deep IPs (/16, 145%) and negative queries (135%),
-    - much faster (260%) for querying varying IPs (>90% negative),
-    - on average, in this tests it has 144% of hashmap performance.
-    - neither Hashmap nor Flatritrie<8> would hold a whole GeoIP DB on my computer.
+    The tests are as follows (see benchmark.cpp):
+    - Rnd 1.5%: Query completely random addresses using fast pseudo-random
+      generator. Only 1.475-1.485% queries match some IP.
+    - Rnd 100%: Query IPs at random, but from the dataset with 100% matches.
+      This uses a data set prepared beforehand by selecting 5mln times a random
+      subnet from the test data and generating a random IP from it.
+    - Rep Pos - Ask for an IP defined deeply with /32 mask which exists in
+      dataset repetively (the same IP each time).
+    - Rep Neg - Repetively ask for IP which is not in the set.
 
     Relation between number of bits matched at each level, performance and RAM
-    (in million queries per second):
-    |----------+-------+-------+-------+-------+-------+-------+-------+-------|
-    | BITS     |     1 |     2 |     3 |     4 |     5 |     6 |     7 |     8 |
-    |----------+-------+-------+-------+-------+-------+-------+-------+-------|
-    | Rand 10% |  53.6 | 106.8 | 150.6 | 199.4 | 239.5 | 295.0 |   340 | 378.0 |
-    | Pos /32  |  17.7 |  44.5 |  65.7 |  89.7 | 104.2 | 120.0 | 143.8 | 178.5 |
-    | Pos /16  |  46.3 |  91.8 | 121.1 | 172.9 | 177.5 | 231.7 | 233.8 | 340.8 |
-    | Neg      | 18.07 |  47.5 |  69.5 |  94.2 | 110.3 | 128.4 | 155.6 | 197.9 |
-    |----------+-------+-------+-------+-------+-------+-------+-------+-------|
-    | RAM      | 1.2MB |   1MB | 2.2MB |   4MB |  10MB |  21MB | 161MB | 160MB |
-    |----------+-------+-------+-------+-------+-------+-------+-------+-------|
+    (in million queries per second) for Flatritrie:
+    |----------+-------+-------+--------+--------+--------+-------+-------|
+    | BITS     |     3 |     4 |     4U |      5 |      6 |     7 |     8 |
+    |----------+-------+-------+--------+--------+--------+-------+-------|
+    | Rnd 1.5% | 87.92 | 94.56 |   95.4 |  128.6 | 140.75 |   111 | 127.2 |
+    | Rnd 100% | 30.01 | 38.08 |  39.47 |  32.37 |  34.12 |  24.7 |  31.4 |
+    | Rep Pos  | 67.15 | 91.81 | 119.48 | 102.12 | 121.03 | 144.6 | 179.2 |
+    | Rep Neg  | 69.64 | 96.45 |  110.9 |  109.1 | 129.58 | 156.9 | 198.1 |
+    |----------+-------+-------+--------+--------+--------+-------+-------|
+    | RAM      |  21MB |  23MB |   23MB |   29MB |   39MB | 180MB | 180MB |
+    |----------+-------+-------+--------+--------+--------+-------+-------|
+
+    4U being the union version, which uses union and struct instead of bitshifts
+    to read IP address nibble by nibble. I didn't check how compiler compiles
+    it.
 
 *** Whole GeoIP Database
-    For loading a bigger dataset - a complete GeoIP database, the configuration
-    with 6 bits looks optimal:
-    - 1.3GB RAM,
-    - 268Mq/s for random queries (all found),
-    - 879ms constructing Tritrie (sexatrie...) and 755 Flatritrie.
+    Additional test loading full GeoIP database and doing a random queries with
+    97.92% matched.
 
-    At 7 BITS it takes over 8GB RAM, builds in 3+4.6s and queries at 256Mq/s.
+    |---------------------+-------+------+-----------------|
+    | Algo                | RAM   | Mq/s | Build time [ms] |
+    |---------------------+-------+------+-----------------|
+    | Flatritrie<3>       | 62MB  |   35 | 108 + 66        |
+    | Flatritrie<4> Union | 155MB |   36 | 154 + 141       |
+    | Flatritrie<6>       | 1.3GB |   27 | 554 + 810       |
+    |---------------------+-------+------+-----------------|
+    7 and 8 bits seem infeasible.
 
+*** Comparison with LCtree implementation
+    Benchmark with a BSD-licensed LC-trie implementation:
+    https://github.com/chuckination/lctrie.git
 
-** Comparison with LCtree implementation
-   Benchmark with a BSD-licensed LC-trie implementation:
-   https://github.com/chuckination/lctrie.git
+    Data sets based on parts of BGP routing table from lctrie repo:
+    - Tiny set: 5000 entries, 38.2% matched during testing (random IP shifted right 4 bits).
+    - Big: 590040 entries, 48.6% matched (random IP shifted right 4 bits).
+    - GeoIP: 336109 entries, 96.9% matched.
+    |-------+------------+---------+----------------+----------------+-----------|
+    | Set   | Tritrie 8b | Flat 8b | Flat 8b, union | Flat 4b, union | LCtrie    |
+    |-------+------------+---------+----------------+----------------+-----------|
+    | Tiny  | 67 Mq/s    | 75 Mq/s | 79.6 Mq/s      | 77.4 Mq/s      | 62.5 Mq/s |
+    | Big   | 49 Mq/s    | 59 Mq/s | 62.1 Mq/s      | 67.4 Mq/s      | 50.7 Mq/s |
+    | GeoIP | -          | -       | -              | 36.4 Mq/s      | 62.7 Mq/s |
+    |-------+------------+---------+----------------+----------------+-----------|
 
-   Data sets based on parts of BGP routing table from lctrie repo:
-   - Tiny set: 5000 entries, 38.2% matched during testing.
-   - Big: 590040 entries, 48.6% matched.
-   - GeoIP: 336109 entries, 87.5% matched.
+    Flat 4b union uses a union and struct to read IP nibble by nibble instead of
+    bit shifting - I didn't check what compilator does with it though.
 
-   |-------+------------+---------+----------------+----------------+-----------|
-   | Set   | Tritrie 8b | Flat 8b | Flat 8b, union | Flat 4b, union | LCtrie    |
-   |-------+------------+---------+----------------+----------------+-----------|
-   | Tiny  | 67 Mq/s    | 75 Mq/s | 79.6 Mq/s      | 77.4 Mq/s      | 62.5 Mq/s |
-   | Big   | 49 Mq/s    | 59 Mq/s | 62.1 Mq/s      | 67.4 Mq/s      | 50.7 Mq/s |
-   | GeoIP | -          | -       | -              | 72 Mq/s        | 112 Mq/s  |
-   |-------+------------+---------+----------------+----------------+-----------|
+    LCtrie is close in terms of query performance, uses WAY less memory, builds
+    faster - but can sometimes be beaten on smaller datasets where query
+    algorithm simplicity seems to be advantageous.
 
-   Flatritrie union uses a union to read IP byte by byte instead of bit
-   shifting. LCtrie is close in terms of query performance, uses WAY less
-   memory, builds faster - but can sometimes be beaten.
-
-   Full GeoIP dataset doesn't fit into memory when using 8 BIT levels.
+    Full GeoIP dataset doesn't fit into memory when using 8 BIT levels.
 
 ** Next steps
-   A bit more of a cleanup.
-
    Flatritrie and Tritrie aren't much different in benchmarks. Possibly using
    Flatritrie table allocator in Tritrie would bury the difference. Allocating
    entries grouped by mask ranges might be sensible.
@@ -189,8 +187,10 @@
    after-creation knowledge to gain better cache locality than it does
    currently.
 
-   Version <8> could be simpler, work directly with network-byte order
-   addresses.
+   Precalculating statistics for data and choosing levels optimally.
+
+   Version <8> and <4> can be simpler, using an union instead of bitshifts and
+   work directly with network-byte order addresses.
 
 ** References
    - https://en.wikipedia.org/wiki/Trie
