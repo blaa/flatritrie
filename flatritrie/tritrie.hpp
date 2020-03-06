@@ -1,5 +1,5 @@
-/*
- * Copyright 2019 Tomasz bla Fortuna. All rights reserved.
+ /*
+ * Copyright 2019-2020 Tomasz bla Fortuna. All rights reserved.
  * License: MIT
  * bla@thera.be, https://github.com/blaa/flatritrie
  */
@@ -22,7 +22,7 @@ namespace Tritrie {
 using uint128_t = unsigned __int128;
 
 /* Debug: support for printing unsigned __int128 */
-std::ostream &operator<<(std::ostream &os, const uint128_t &data) {
+static std::ostream &operator<<(std::ostream &os, const uint128_t &data) {
     union {
         uint128_t whole;
         struct {
@@ -217,8 +217,8 @@ public:
             throw std::runtime_error("Address without a mask");
         }
 
-        assert(mask >= 1 && mask <= BITS_TOTAL);
-        if (mask < 1 || mask > BITS_TOTAL)
+        assert(mask >= 0 && mask <= BITS_TOTAL);
+        if (mask < 0 || mask > BITS_TOTAL)
             throw std::exception();
         this->add_ip(ip, mask, value);
     }
@@ -236,14 +236,14 @@ public:
 
     V query(K ip) const {
         const Node *cur = &this->root;
-        V matched = def;
+        V matched = cur->value;
         for (int mask = 0; mask < BITS_TOTAL; mask++) {
             const int tri = ip >> (BITS_TOTAL - BITS);
             cur = cur->child[tri];
             if (cur == NULL) {
                 break;
             }
-            if (cur->value != -1) {
+            if (cur->value != def) {
                 matched = cur->value;
                 /* We will continue search, as there might be a closer match */
             }

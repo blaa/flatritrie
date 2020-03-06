@@ -62,7 +62,9 @@ const std::vector<std::pair<std::string, int>> testcases_v4 = {
 };
 
 const std::vector<std::pair<std::string, int>> data_v6 = {
-    /* Address, ID */
+    /* {Address, ID} */
+    {"::/0", -2}, /* Explicit default entry */
+
     {"2001:200::/32", 1},
     {"2001:200:4000::/38", 2},
 
@@ -95,7 +97,7 @@ const std::vector<std::pair<std::string, int>> testcases_v6 = {
 
     {"2001:470:0:284::1000", 10},
     {"2001:470:0:284::1fff", 10},
-    {"2001:470:0:284::999", -1},
+    {"2001:470:0:284::999", -2},
 
     {"2001:470:0:284::2000", 11},
     {"2001:470:0:284::", 20},
@@ -107,11 +109,10 @@ const std::vector<std::pair<std::string, int>> testcases_v6 = {
     {"2001:470:0:285:a:b:c:d", 23},
 
     {"2001:470:1f0b:a9:9dc3:6ed8:e819:f89a", 40},
-    {"2001:470:1f0b:a9:9dc3:6ed8:e819:f89b", -1},
-    {"2001:470:1f0b:a9:9dc3:6ed8:e819:f899", -1},
-    {"2002:470:1f0b:a9:9dc3:6ed8:e819:f89a", -1},
+    {"2001:470:1f0b:a9:9dc3:6ed8:e819:f89b", -2},
+    {"2001:470:1f0b:a9:9dc3:6ed8:e819:f899", -2},
+    {"2002:470:1f0b:a9:9dc3:6ed8:e819:f89a", -2},
 };
-
 
 template<typename T, typename K>
 int runner(T &algo, K &testcases) {
@@ -207,7 +208,7 @@ int testcase_tritrie() {
 template<int BITS>
 int testcase_ipv6() {
     int ret = 0;
-    Tritrie::Tritrie<BITS, Tritrie::uint128_t> tritrie;
+    Tritrie::Tritrie<BITS, Tritrie::uint128_t, int32_t, -500> tritrie;
 
     std::cout << "Generating tritrie<" << BITS << "> for IPv6" << std::endl;
     int id = 0;

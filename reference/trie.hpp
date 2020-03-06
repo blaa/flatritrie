@@ -1,5 +1,5 @@
 /*
- * Copyright 2019 Tomasz bla Fortuna. All rights reserved.
+ * Copyright 2019-2020 Tomasz bla Fortuna. All rights reserved.
  * License: MIT
  * bla@thera.be, https://github.com/blaa/flatritrie
  */
@@ -23,6 +23,8 @@
  *
  * Would work for IPv6. The Trie is browsed until the end and the best "value"
  * match is updated, so we can match the best matching entry.
+ *
+ * This is used as a reference in benchmarking.
  */
 class Trie {
 protected:
@@ -110,7 +112,7 @@ public:
         int ret = inet_aton(addr_mask[0].c_str(), &ip_parsed);
         if (ret == 0)
             throw std::exception();
-        assert(mask >= 1 && mask <= 32);
+        assert(mask >= 0 && mask <= 32);
 
         uint32_t ip_network = ntohl(ip_parsed.s_addr);
         this->add_ip(ip_network, mask, id);
@@ -128,7 +130,7 @@ public:
 
     int query(uint32_t ip) const {
         const Node *cur = &this->root;
-        int matched_id = -1;
+        int matched_id = cur->id;
         for (int mask = 0; mask < 32; mask++) {
             const int bit = ip >> 31;
             cur = cur->child[bit];
