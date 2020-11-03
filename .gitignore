@@ -3,3 +3,4 @@ geotest
 unit_tests
 example_geoip
 GeoLite*
+compile_commands.json

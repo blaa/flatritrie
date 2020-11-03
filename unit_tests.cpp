@@ -10,9 +10,23 @@
 #include "trie.hpp"
 #include "tritrie.hpp"
 #include "flatritrie.hpp"
+#include "multitritrie.hpp"
 #include "hashmap.hpp"
 
 namespace Test {
+
+/* Debug: support for printing std::set */
+std::ostream &operator<<(std::ostream &os, const std::set<int32_t> &data) {
+  os << "{";
+  for (auto entry = data.begin(); entry != data.end(); entry++) {
+    if (std::next(entry) != data.end())
+      os << *entry << ", ";
+    else
+      os << *entry;
+  }
+  os << "}";
+  return os;
+}
 
 const std::vector<std::pair<std::string, int>> data_v4 = {
     /* Address, ID */
@@ -24,7 +38,7 @@ const std::vector<std::pair<std::string, int>> data_v4 = {
     {"95.175.112.0/21", 4},
     {"95.175.144.0/21", 5},
 
-    /* Collides tritrie */
+    /* Collides <3> tritrie */
     {"170.85.200.0/22", 6},
     {"170.85.202.0/24", 7},
 
@@ -61,6 +75,17 @@ const std::vector<std::pair<std::string, int>> testcases_v4 = {
     {"95.175.151.254", 5},
 };
 
+const std::vector<std::pair<std::string, std::set<int>>> testcases_multi_v4 = {
+    {"1.1.1.1", {}},
+    {"255.0.0.1", {0}},
+    {"10.255.0.0", {2}},
+    {"10.255.1.0", {2}},
+    {"10.255.0.3", {2, 3}},
+
+    {"170.85.200.1", {6}},
+    {"170.85.202.1", {6, 7}},
+};
+
 const std::vector<std::pair<std::string, int>> data_v6 = {
     /* {Address, ID} */
     {"::/0", -2}, /* Explicit default entry */
@@ -81,7 +106,6 @@ const std::vector<std::pair<std::string, int>> data_v6 = {
     {"2001:470:0:284::1/128", 21},
 
     {"2001:470:1f0b:a9:9dc3:6ed8:e819:f89a/128", 40},
-
 };
 
 const std::vector<std::pair<std::string, int>> testcases_v6 = {
@@ -136,6 +160,39 @@ int runner(T &algo, K &testcases) {
     return failures;
 }
 
+template <typename T, typename M, typename K>
+int runner_multi(T &algo, M &testcases_m, K &testcases) {
+    int successes = 0;
+    int failures = 0;
+    /* Multi testcases */
+    for (auto &m_testcase : testcases_m) {
+        const std::set<int> &ret = algo.query_all_string(m_testcase.first);
+        if (ret != m_testcase.second) {
+            std::cout << "TEST FAIL " << m_testcase.first << " returned " << ret
+                      << " should " << m_testcase.second << std::endl;
+            failures += 1;
+        } else {
+            successes += 1;
+        }
+    };
+    /* Normal testcases should validate multi API as well */
+    for (auto &testcase : testcases) {
+        const std::set<int> &ret = algo.query_all_string(testcase.first);
+        if (testcase.second == -1 && ret.size() == 0)
+        {
+            successes += 1;
+        } else if (ret.count(testcase.second) != 1) {
+            std::cout << "TEST FAIL " << testcase.first << " returned " << ret
+                      << " should include " << testcase.second << std::endl;
+            failures += 1;
+        } else {
+            successes += 1;
+        }
+    };
+    std::cout << "TESTS: OK=" << successes << " FAILED=" << failures << std::endl;
+    std::cout << std::endl;
+    return failures;
+}
 }
 
 int testcase_map() {
@@ -174,16 +231,23 @@ template<int BITS>
 int testcase_tritrie() {
     int ret = 0;
     Tritrie::Tritrie<BITS> tritrie;
+    Tritrie::MultiTritrie<BITS> multi_tritrie;
 
-    std::cout << "Generating tritrie<" << BITS << ">" << std::endl;
+    std::cout << "Generating tritrie<" << BITS << "> and multitritrie" << std::endl;
     int id = 0;
     for (auto &item: Test::data_v4) {
         tritrie.add(item.first, item.second);
+        multi_tritrie.add(item.first, item.second);
         id++;
     }
 
     std::cout << "Testing tritrie<" << BITS << ">" << std::endl;
-    ret = Test::runner<>(tritrie, Test::testcases_v4);
+    ret += Test::runner<>(tritrie, Test::testcases_v4);
+
+    std::cout << "Testing multitritrie<" << BITS << ">" << std::endl;
+    ret += Test::runner<>(multi_tritrie, Test::testcases_v4);
+    ret += Test::runner_multi<>(multi_tritrie, Test::testcases_multi_v4,
+                                Test::testcases_v4);
 
     /* FlaTritrie test */
     Tritrie::Flat<BITS> flatritrie;
@@ -193,7 +257,6 @@ int testcase_tritrie() {
 
     /* Should build second time as well */
     flatritrie.build(tritrie);
-
 
     /* Error handling */
     try {
@@ -237,7 +300,8 @@ int main() {
     ret += testcase_tritrie<7>();
     ret += testcase_tritrie<8>();
 
-    testcase_ipv6<8>();
+    ret += testcase_ipv6<8>();
+    ret += testcase_ipv6<4>();
 
     return ret;
 }

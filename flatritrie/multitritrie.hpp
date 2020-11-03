@@ -4,13 +4,14 @@
   * bla@thera.be, https://github.com/blaa/flatritrie
   */
 
-#ifndef _BLA_TRITRIE_H_
-#define _BLA_TRITRIE_H_
+#ifndef _BLA_MULTITRITRIE_H_
+#define _BLA_MULTITRITRIE_H_
 
 #include <iostream>
 #include <string>
 #include <bitset>
 #include <cassert>
+#include <set>
 
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -20,26 +21,11 @@ namespace Tritrie {
 
 using uint128_t = unsigned __int128;
 
-/* Debug: support for printing unsigned __int128 */
-static std::ostream &operator<<(std::ostream &os, const uint128_t &data) {
-    union {
-        uint128_t whole;
-        struct {
-            uint64_t low;
-            uint64_t high;
-        };
-    } broken;
-    broken.whole = data;
-    os << "H" << std::bitset<64>(broken.high);
-    os << "L" << std::bitset<64>(broken.low);
-    return os;
-}
-
 /*
  * Trie with a configurable number of branches per level (1 to 8).
  */
 template<int BITS=8, typename K=uint32_t, typename V=int32_t, V def=-1>
-class Tritrie {
+class MultiTritrie {
 protected:
     /* NOTE: No support in numerical_limits for int128 */
     constexpr static K MASK_MAX = (K)(-1);
@@ -50,14 +36,19 @@ protected:
         /* Matched with triplets of bits */
         Node *child[CHILDREN] = {};
 
-        /* 'def' for middle node */
-        V value;
+        /* 'def' for middle node TODO: or better - empty? */
+        /* Longest Prefix Match value */
+        V lpm_value;
+        /* Accumulated matching entries */
+        std::set<V> values;
 
-        Node() : value(def) {}
+        Node() : lpm_value(def) {}
 
         void show() {
-            std::cout << "Node value="
-                      << this->value;
+            std::cout << "Node lpm value="
+                      << this->lpm_value
+                      << " all="
+                      << this->values;
             for (int i=0; i < CHILDREN; i++) {
                 std::cout << " child_" << i << "=" << this->child[i] << " ";
             }
@@ -82,31 +73,38 @@ protected:
     void add_ip(K ip, int mask, V value) {
         int mask_left = mask;
         Node *cur = &this->root;
-        V cur_value = this->root.value;
+        /* While diving deeper, we "carry" and aggregate previously passed
+           values */
+        std::set<V> aggregated = cur->values;
 
+        /* Runtime sanity check */
         if (mask < this->last_mask) {
             std::cerr << "Inserting mask " << mask
                       << " after mask " << this->last_mask << std::endl;
-            throw std::runtime_error("Invalid order of IP insertion to Tritrie");
+            throw std::runtime_error("Invalid order of IP insertion to MultiTritrie");
         }
-
-        assert(BITS_TOTAL > BITS);
         this->last_mask = mask;
 
-        for (; mask_left >= BITS; mask_left -= BITS) {
-            if (value == cur_value) {
-                /* Deduplicate entries with the same value, but on
-                 * different mask levels */
-                return;
-            }
+        assert(BITS_TOTAL > BITS);
 
+        for (; mask_left >= BITS; mask_left -= BITS) {
             /* Shave "BITS" most significant bits */
             const int tri = ip >> (BITS_TOTAL - BITS);
             ip <<= BITS;
 
             cur = this->get_or_create(cur, tri);
-            cur_value = cur->value;
+            if (cur->values.size() == 0) {
+                /* If we created a new node, we should pass down all aggregated
+                 * values */
+                cur->values.insert(aggregated.begin(), aggregated.end());
+            } else {
+                /* Old node - aggregate its values into set */
+                aggregated.insert(cur->values.begin(), cur->values.end());
+            }
         }
+
+        /* We reached a place to add the new value */
+        aggregated.insert(value);
 
         /* Handle last level appropriately */
         if (mask_left) {
@@ -126,22 +124,23 @@ protected:
              * etc.
              * (0xffffffff >> (BITS_TOTAL-mask_left)) << (BITS - mask_left)
              */
-            const K mask = (
-                (MASK_MAX >> (BITS_TOTAL - mask_left)) << (BITS - mask_left)
-            );
+            const K mask = ((MASK_MAX >> (BITS_TOTAL - mask_left))
+                            << (BITS - mask_left));
             assert(mask != 0);
 
             for (int tri = 0; tri < CHILDREN; tri++) {
                 if ((tri & mask) == ip) {
                     /* Insert here */
                     auto lvl = this->get_or_create(cur, tri);
-                    lvl->value = value;
+                    lvl->lpm_value = value;
+                    lvl->values.insert(aggregated.begin(), aggregated.end());
                 }
             }
         } else {
             /* After using whole mask, the IP should be 0 */
             assert(ip == 0);
-            cur->value = value;
+            cur->lpm_value = value;
+            cur->values.insert(aggregated.begin(), aggregated.end());
         }
     }
 
@@ -197,11 +196,11 @@ protected:
     }
 
     /* Don't copy. */
-    Tritrie(const Tritrie &tritrie);
+    MultiTritrie(const MultiTritrie &tritrie);
 
 public:
-    Tritrie() {}
-    ~Tritrie() {
+    MultiTritrie() {}
+    ~MultiTritrie() {
         this->release(&this->root);
     }
 
@@ -230,22 +229,47 @@ public:
         return this->query(ip);
     }
 
+    const std::set<V> &query_all_string(const std::string &addr) const {
+        K ip;
+        int mask;
+        this->ip_from_string(addr, ip, mask);
+        if (mask != -1 && mask != BITS_TOTAL) {
+            throw std::runtime_error("Query with partial mask.");
+        }
+        return this->query_all(ip);
+    }
+
     V query(K ip) const {
         const Node *cur = &this->root;
-        V matched = cur->value;
+        V matched = cur->lpm_value;
         for (int mask = 0; mask < BITS_TOTAL; mask++) {
             const int tri = ip >> (BITS_TOTAL - BITS);
             cur = cur->child[tri];
             if (cur == NULL) {
                 break;
             }
-            if (cur->value != def) {
-                matched = cur->value;
+            if (cur->lpm_value != def) {
+                matched = cur->lpm_value;
                 /* We will continue search, as there might be a closer match */
             }
             ip <<= BITS;
         }
         return matched;
+    }
+
+    const std::set<V> &query_all(K ip) const {
+        const Node *cur = &this->root;
+        const std::set<V> *matched = &cur->values;
+        for (int mask = 0; mask < BITS_TOTAL; mask++) {
+            const int tri = ip >> (BITS_TOTAL - BITS);
+            cur = cur->child[tri];
+            if (cur == NULL) {
+                break;
+            }
+            matched = &cur->values;
+            ip <<= BITS;
+        }
+        return *matched;
     }
 
     int size() const {

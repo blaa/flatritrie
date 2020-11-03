@@ -8,6 +8,7 @@
 #define _FLATRITRIE_H_
 
 #include <limits>
+#include <vector>
 #include <tritrie.hpp>
 
 namespace Tritrie {
@@ -27,7 +28,7 @@ namespace Tritrie {
  * - Doesn't require expansion of ip/masks.
  * - Limits random memory reads when possible.
  */
-template<int BITS=DEFAULT_BITS,
+template<int BITS=8,
          typename K=uint32_t, typename V=int32_t,
          V def=-1, int PAGE_SIZE=10000>
 class Flat {

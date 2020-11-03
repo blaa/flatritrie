@@ -15,6 +15,7 @@
 #include "trie.hpp"
 #include "tritrie.hpp"
 #include "flatritrie.hpp"
+#include "multitritrie.hpp"
 // #include "flat4.hpp"
 
 #include "hashmap.hpp"
@@ -92,10 +93,14 @@ void test_tritrie(const std::string &name,
                   const std::vector<std::string> &test_data,
                   const std::vector<uint32_t> &test_queries) {
     Tritrie::Tritrie<BITS> tritrie;
+    Tritrie::Tritrie<BITS> multi_tritrie;
 
     test_generation("Tritrie" + name, tritrie, test_data);
     std::cout << "Nodes created " << tritrie.size() << std::endl;
     test_suite(tritrie, "Tritrie" + name, test_queries);
+
+    test_generation("MultiTritrie" + name, multi_tritrie, test_data);
+    test_suite(multi_tritrie, "MultiTritrie" + name, test_queries);
 
     Tritrie::Flat<BITS> flatritrie;
     measure("Flatritrie" + name + " generation",
